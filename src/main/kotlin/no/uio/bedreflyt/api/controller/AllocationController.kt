@@ -91,6 +91,7 @@ class AllocationController (
     )
     @PostMapping("/allocate")
     fun allocateRooms(@SwaggerRequestBody(description = "Request to allocate rooms for patients") @Valid @RequestBody allocationRequest: AllocationRequest): ResponseEntity<AllocationResponseDTO> {
+        log.info("Allocating rooms for ${allocationRequest.scenario.size} patients")
         allocationLock.lock()
         try {
             log.info("Allocating rooms for ${allocationRequest.scenario.size} patients")
@@ -101,7 +102,7 @@ class AllocationController (
                 hospitalCode = allocationRequest.hospitalCode,
                 isSimulated = false,
                 timeStep = 0,
-                adaptiveCapacity = allocationRequest.adaptative,
+                adaptiveCapacity = allocationRequest.adaptive,
                 smtMode = allocationRequest.smtMode
             )
 
@@ -154,6 +155,9 @@ class AllocationController (
             simulator.setIndexRoomMap(indexRoomMap)
 
             val filteredPatients = simulationResult.patientsNeeds[0].distinctBy { it.first } as DailyNeeds
+
+            log.info("Filtered patients for day 0: ${filteredPatients.size}")
+            log.info("Subset of filtered patients: ${filteredPatients.take(5).map { it.first.patientId }}")
             val res = simulator.simulate(
                 mutableListOf(filteredPatients),
                 databaseResult.patients,
@@ -410,7 +414,7 @@ class AllocationController (
                 smtMode = context.smtMode,
                 wardName = context.wardName,
                 hospitalCode = context.hospitalCode,
-                adaptative = context.adaptiveCapacity
+                adaptive = context.adaptiveCapacity
             )
         }
 
@@ -464,7 +468,7 @@ class AllocationController (
                 smtMode = context.smtMode,
                 wardName = context.wardName,
                 hospitalCode = context.hospitalCode,
-                adaptative = context.adaptiveCapacity
+                adaptive = context.adaptiveCapacity
             )
         }
 

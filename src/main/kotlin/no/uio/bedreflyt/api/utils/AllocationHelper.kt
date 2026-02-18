@@ -200,6 +200,29 @@ class AllocationHelper (
         val simulationNeeds: MutableList<DailyNeeds> = simulator.computeDailyNeeds(databaseResult.tempDir)?.toMutableList()
             ?: throw Exception("Could not compute daily needs")
 
+        // For patients whose day-0 entry has need=0 (arrival / admission step), remove that
+        // entry and promote their day-1 need into day 0 so they are sent to the solver on the
+        // very first allocation call.  Multiple leading zeros are also handled: we keep stepping
+        // forward until we find the first non-zero need.
+        if (simulationNeeds.isNotEmpty()) {
+            val day0 = simulationNeeds[0]
+            val arrivals = day0.filter { it.second == 0 }
+            if (arrivals.isNotEmpty()) {
+                day0.removeAll(arrivals)
+                arrivals.forEach { (patient, _) ->
+                    val firstRealNeed = simulationNeeds.drop(1).firstOrNull { dayNeeds ->
+                        dayNeeds.any { it.first == patient && it.second > 0 }
+                    }?.firstOrNull { it.first == patient && it.second > 0 }
+                    if (firstRealNeed != null) {
+                        day0.add(Pair(patient, firstRealNeed.second))
+                        logger.info("Patient ${patient.patientId} promoted from arrival (need=0) to day-0 with need=${firstRealNeed.second}")
+                    } else {
+                        logger.info("Patient ${patient.patientId} has arrival entry (need=0) and no subsequent need — excluded from solver")
+                    }
+                }
+            }
+        }
+
         val absTime = System.currentTimeMillis() - startTime - componentsRetrievalTime - setupResult.endLifecycleManager
 
         val patientNeeds = mutableMapOf<Patient, Long>()

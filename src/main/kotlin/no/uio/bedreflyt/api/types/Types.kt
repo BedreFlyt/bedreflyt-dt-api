@@ -8,7 +8,7 @@ data class SimulationRequest(
     val smtMode: String = "changes",
     val wardName: String,
     val hospitalCode: String,
-    val adaptative: Boolean = true
+    val adaptive: Boolean = true
 )
 
 data class TriggerAllocationRequest (
