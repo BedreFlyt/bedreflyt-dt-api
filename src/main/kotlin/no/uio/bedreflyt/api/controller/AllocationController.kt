@@ -161,7 +161,8 @@ class AllocationController (
                 databaseResult.rooms,
                 simulationResult.ward,
                 databaseResult.tempDir,
-                allocationRequest.smtMode
+                allocationRequest.smtMode,
+                context.wardName
             )
             val allocationResponse = res.first
             val allocationTimes = res.second
@@ -272,7 +273,8 @@ class AllocationController (
                 databaseResult.rooms,
                 simulationResult.ward,
                 databaseResult.tempDir,
-                allocationRequest.smtMode
+                allocationRequest.smtMode,
+                context.wardName
             )
             val allocationResponse = res.first
             val allocationTimes = res.second
@@ -439,7 +441,8 @@ class AllocationController (
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
         mode: String
     ): DatabaseSetupResult? {
-        val rooms = roomService.getRoomsByWardHospital(context.wardName, context.hospitalCode)
+        val rooms = roomService.getAllRooms()
+            ?.filter { it.hospital.hospitalCode == context.hospitalCode }
             ?: return null
 
         createMaps(rooms, context.isSimulated)
