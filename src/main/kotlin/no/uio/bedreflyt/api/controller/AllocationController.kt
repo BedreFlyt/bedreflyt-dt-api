@@ -173,8 +173,8 @@ class AllocationController (
 
             // Process and return response
             return processAllocationResponse(
-                allocationResponse, allocationTimes, context, setupResult, 
-                simulationResult, setupResult.incomingPatients, startTime
+                allocationResponse, allocationTimes, context, setupResult,
+                simulationResult, setupResult.incomingPatients, startTime, databaseResult.rooms
             )
         } finally {
             allocationLock.unlock()
@@ -286,8 +286,8 @@ class AllocationController (
 
             // Process and return response
             return processAllocationResponse(
-                allocationResponse, allocationTimes, context, setupResult, 
-                simulationResult, setupResult.incomingPatients, startTime
+                allocationResponse, allocationTimes, context, setupResult,
+                simulationResult, setupResult.incomingPatients, startTime, databaseResult.rooms
             )
         } finally {
             simulationLock.unlock()
@@ -490,8 +490,10 @@ class AllocationController (
         setupResult: AllocationSetupResult,
         simulationResult: SimulationResult,
         incomingPatients: MutableList<Pair<Patient, String>>,
-        startTime: Long
+        startTime: Long,
+        rooms: List<TreatmentRoom>
     ): ResponseEntity<AllocationResponseDTO> {
+        val roomLookup: Map<Int, TreatmentRoom> = rooms.associateBy { it.roomNumber }
         return if (allocationResponse.allocations.isNotEmpty()) {
             // Save allocation results to database
             allocationResponse.allocations.forEach { allocationList ->
@@ -506,13 +508,16 @@ class AllocationController (
                                 if (patientAllocation != null) {
                                     if (patientAllocation.roomNumber == -1) {
                                         patientAllocation.roomNumber = room.roomNumber
-                                        patientAllocationService.updatePatientAllocation(patientAllocation)
                                     } else {
                                         val roomMapToUse = if (context.isSimulated) roomMapSim else roomMap
                                         patientAllocation.roomNumber =
                                             roomMapToUse[patientAllocation.roomNumber] ?: patientAllocation.roomNumber
-                                        patientAllocationService.updatePatientAllocation(patientAllocation)
                                     }
+                                    roomLookup[patientAllocation.roomNumber]?.let { treatmentRoom ->
+                                        patientAllocation.wardName = treatmentRoom.treatmentWard.wardName
+                                        patientAllocation.hospitalCode = treatmentRoom.hospital.hospitalCode
+                                    } ?: log.warn("No TreatmentRoom found for room number ${patientAllocation.roomNumber}")
+                                    patientAllocationService.updatePatientAllocation(patientAllocation)
                                 } else {
                                     log.warn("Could not find allocation for patient ${singlePatient.patientId}")
                                 }

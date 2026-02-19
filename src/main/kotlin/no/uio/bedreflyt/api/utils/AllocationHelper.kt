@@ -150,7 +150,7 @@ class AllocationHelper (
     ): MutableMap<Patient, PatientAllocation> {
         val allocations: MutableMap<Patient, PatientAllocation> = mutableMapOf()
         incomingPatients.forEach { (patient, diagnosis) ->
-            val patientAllocation = patientAllocationService.findByPatientId(patient)
+            val patientAllocation = patientAllocationService.findByPatientId(patient, context.isSimulated)
             if (patientAllocation == null) {
                 val newPatientAllocation = PatientAllocation(
                     patientId = patient,
