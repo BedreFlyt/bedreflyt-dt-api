@@ -16,6 +16,8 @@ import no.uio.bedreflyt.api.service.live.PatientService
 import no.uio.bedreflyt.api.service.live.PatientTrajectoryService
 import no.uio.bedreflyt.api.service.simulation.DatabaseService
 import no.uio.bedreflyt.api.service.triplestore.RoomService
+import no.uio.bedreflyt.api.service.triplestore.TreatmentService
+import no.uio.bedreflyt.api.service.triplestore.TreatmentStepService
 import no.uio.bedreflyt.api.service.triplestore.WardService
 import no.uio.bedreflyt.api.types.AllocationContext
 import no.uio.bedreflyt.api.utils.Simulator
@@ -32,6 +34,8 @@ import no.uio.bedreflyt.api.types.SimulationRequest
 import no.uio.bedreflyt.api.types.SolverTimeLogging
 import no.uio.bedreflyt.api.types.DatabaseSetupResult
 import no.uio.bedreflyt.api.types.SimulationResult
+import no.uio.bedreflyt.api.types.Supply
+import no.uio.bedreflyt.api.types.SupplyChecker
 import no.uio.bedreflyt.api.types.TimeLogging
 import no.uio.bedreflyt.api.types.TriggerAllocationRequest
 import no.uio.bedreflyt.api.utils.AllocationHelper
@@ -62,6 +66,8 @@ class AllocationController (
     private val patientTrajectoryService: PatientTrajectoryService,
     private val wardService: WardService,
     private val roomService: RoomService,
+    private val treatmentStepService: TreatmentStepService,
+    private val treatmentService: TreatmentService,
     private val environmentConfig: EnvironmentConfig,
     private val allocationHelper: AllocationHelper
 ) {
@@ -153,6 +159,8 @@ class AllocationController (
             
             simulator.setRoomMap(roomMap)
             simulator.setIndexRoomMap(indexRoomMap)
+
+            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode)
 
             val filteredPatients = simulationResult.patientsNeeds[0].distinctBy { it.first } as DailyNeeds
 
@@ -265,6 +273,8 @@ class AllocationController (
             
             simulator.setRoomMap(roomMapSim)
             simulator.setIndexRoomMap(indexRoomMapSim)
+
+            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode)
 
             val cleaned = System.currentTimeMillis()
             log.info("Cleaned allocations in ${cleaned - afterNeeds}ms")
@@ -481,6 +491,100 @@ class AllocationController (
             patients = patients,
             trajectories = trajectories
         )
+    }
+
+    private fun buildSupplyChecker(
+        patientsNeeds: MutableList<DailyNeeds>,
+        scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
+        mode: String
+    ): SupplyChecker {
+        // Map patientId -> resolved treatment name from the incoming scenario.
+        // When treatmentName is absent, resolve it from the diagnosis via the triplestore
+        // so that getTreatmentStepsByTreatmentName can find the correct steps.
+        val scenarioTreatmentMap = scenario.associate { req ->
+            val resolved = req.treatmentName
+                ?: try {
+                    treatmentService.getTreatmentByDiagnosisAndMode(req.diagnosis, mode).treatmentName
+                } catch (e: Exception) {
+                    log.warn("Could not resolve treatment name for diagnosis '${req.diagnosis}' (patient ${req.patientId}): ${e.message}")
+                    req.diagnosis // fall back to diagnosis so the patient is processed and the step-lookup warn is shown
+                }
+            req.patientId to resolved
+        }
+
+        val allPatients = patientsNeeds.flatMap { it }.map { it.first }.distinctBy { it.patientId }
+        val suppliesMap = mutableMapOf<String, List<List<Supply>>>()
+
+        allPatients.forEach { patient ->
+            val patientId = patient.patientId
+
+            // Prefer scenario-provided treatment name; fall back to allocation's diagnosisCode
+            val treatmentName = scenarioTreatmentMap[patientId]
+                ?: patientAllocationService.findByPatientId(patient)?.diagnosisCode
+                ?: run {
+                    log.warn("No treatment found for patient $patientId — skipping supply entry")
+                    return@forEach
+                }
+
+            val steps = treatmentStepService.getTreatmentStepsByTreatmentName(treatmentName)
+                ?.sortedBy { it.stepNumber }
+                ?: run {
+                    log.warn("No treatment steps found for treatment '$treatmentName' (patient $patientId)")
+                    return@forEach
+                }
+
+            val timestepSupplies: List<List<Supply>> = patientsNeeds.mapIndexed { timeStep, dailyNeeds ->
+                if (dailyNeeds.any { it.first.patientId == patientId }) {
+                    val step = steps.getOrNull(timeStep)
+                    if (step != null) {
+                        listOf(Supply(itemName = step.task.taskName, quantity = 1))
+                    } else {
+                        emptyList()
+                    }
+                } else {
+                    emptyList()
+                }
+            }
+
+            suppliesMap[patientId] = timestepSupplies
+        }
+
+        return SupplyChecker(supplies = suppliesMap)
+    }
+
+    fun sendSupplyRequest(
+        patientsNeeds: MutableList<DailyNeeds>,
+        scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
+        mode: String
+    ) {
+        try {
+            val sblHost = environmentConfig.getOrDefault("SBL_HOST", "localhost")
+            val sblPort = environmentConfig.getOrDefault("SBL_PORT", "8092")
+            val endpoint = "http://$sblHost:$sblPort/api/supply-management/supplies"
+
+            val supplyChecker = buildSupplyChecker(patientsNeeds, scenario, mode)
+
+            val connection = URI(endpoint).toURL().openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.doOutput = true
+
+            val objectMapper = jacksonObjectMapper()
+            val jsonString = objectMapper.writeValueAsString(supplyChecker)
+            log.info("Sending supply request to $endpoint: $jsonString")
+
+            connection.outputStream.use { outputStream ->
+                outputStream.write(jsonString.toByteArray(Charsets.UTF_8))
+            }
+
+            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                log.info("Supply request sent successfully to $endpoint")
+            } else {
+                log.warn("Supply request to $endpoint returned status ${connection.responseCode}")
+            }
+        } catch (e: Exception) {
+            log.error("Failed to send supply request to SBL: ${e.message}", e)
+        }
     }
 
     private fun processAllocationResponse(
