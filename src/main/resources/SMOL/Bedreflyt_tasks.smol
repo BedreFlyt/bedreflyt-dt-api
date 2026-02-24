@@ -17,6 +17,7 @@ class TaskModel extends BaseModel ()
                 Task newTask = newTasks.content;
                 List<Task> lx = newTasks;
                 newTasks = newTasks.next;
+                newTask.setSupplies();
                 
                 print("RECONFIG> Adding task " ++ newTask.taskName);
                 destroy(lx);

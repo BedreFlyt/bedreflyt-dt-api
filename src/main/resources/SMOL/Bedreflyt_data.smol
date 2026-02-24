@@ -5,9 +5,15 @@ class Diagnosis extends Twin (
 )
 end
 
+class Supply extends Twin (
+    String supplyName
+)
+end
+
 class Task extends Twin (
     String taskName,
-    Room physicalLocation
+    Room physicalLocation,
+    List<Supply> supplies
 )
     Room getPhysicalLocation()
         Room roomContent = access("
@@ -27,6 +33,33 @@ class Task extends Twin (
         Room room = roomContent.content;
         destroy(roomContent);
         return room;
+    end
+
+    Unit setSupplies()
+        print("RECONFIG> Setting supplies for task " ++ this.taskName);
+        List<Supply> suppliesContent = construct("
+        PREFIX : <http://www.smolang.org/bedreflyt/>
+
+        SELECT ?supplyName
+        WHERE {
+            ?task rdf:type <http://purl.org/net/p-plan#Step> ;
+                :taskName %1 ;
+                :requiresSupply ?supplies .
+            
+            ?supplies a :Supply ;
+                rdfs:label ?supplyName .
+        }", this.taskName);
+
+        if suppliesContent != null then
+            print("RECONFIG> Setting supplies for task " ++ this.taskName);
+            this.supplies = suppliesContent.content;
+
+            // while this.supplies != null do
+            //     Supply supply = this.supplies.content;
+            //     print("RECONFIG> Setting supply " ++ supply.supplyName);
+            //     this.supplies = this.supplies.next;
+            // end
+        end
     end
 end
 
