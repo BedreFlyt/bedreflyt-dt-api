@@ -8,3 +8,8 @@ data class Supply(
 data class SupplyChecker(
     val supplies: Map<String, List<List<Supply>>>
 )
+
+data class SuppliesChecker(
+    val numberOfPatients: Int,
+    val supplies: List<Supply>
+)

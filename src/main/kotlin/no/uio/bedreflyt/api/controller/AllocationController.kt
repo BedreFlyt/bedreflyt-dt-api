@@ -36,6 +36,7 @@ import no.uio.bedreflyt.api.types.DatabaseSetupResult
 import no.uio.bedreflyt.api.types.SimulationResult
 import no.uio.bedreflyt.api.types.Supply
 import no.uio.bedreflyt.api.types.SupplyChecker
+import no.uio.bedreflyt.api.types.SuppliesChecker
 import no.uio.bedreflyt.api.types.TimeLogging
 import no.uio.bedreflyt.api.types.TriggerAllocationRequest
 import no.uio.bedreflyt.api.utils.AllocationHelper
@@ -160,7 +161,8 @@ class AllocationController (
             simulator.setRoomMap(roomMap)
             simulator.setIndexRoomMap(indexRoomMap)
 
-            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode)
+            val supplyType = environmentConfig.getOrDefault("SUPPLY_TYPE", "supplies")
+            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode, supplyType)
 
             val filteredPatients = simulationResult.patientsNeeds[0].distinctBy { it.first } as DailyNeeds
 
@@ -274,7 +276,8 @@ class AllocationController (
             simulator.setRoomMap(roomMapSim)
             simulator.setIndexRoomMap(indexRoomMapSim)
 
-            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode)
+            val supplyType = environmentConfig.getOrDefault("SUPPLY_TYPE", "supplies")
+            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode, supplyType)
 
             val cleaned = System.currentTimeMillis()
             log.info("Cleaned allocations in ${cleaned - afterNeeds}ms")
@@ -552,17 +555,75 @@ class AllocationController (
         return SupplyChecker(supplies = suppliesMap)
     }
 
-    fun sendSupplyRequest(
+    private fun buildSuppliesChecker(
         patientsNeeds: MutableList<DailyNeeds>,
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
         mode: String
+    ): SuppliesChecker {
+        val scenarioTreatmentMap = scenario.associate { req ->
+            val resolved = req.treatmentName
+                ?: try {
+                    treatmentService.getTreatmentByDiagnosisAndMode(req.diagnosis, mode).treatmentName
+                } catch (e: Exception) {
+                    log.warn("Could not resolve treatment name for diagnosis '${req.diagnosis}' (patient ${req.patientId}): ${e.message}")
+                    req.diagnosis
+                }
+            req.patientId to resolved
+        }
+
+        val allPatients = patientsNeeds.flatMap { it }.map { it.first }.distinctBy { it.patientId }
+        val numberOfPatients = allPatients.size
+
+        val suppliesAggregated = mutableMapOf<String, Int>()
+
+        allPatients.forEach { patient ->
+            val patientId = patient.patientId
+
+            val treatmentName = scenarioTreatmentMap[patientId]
+                ?: patientAllocationService.findByPatientId(patient)?.diagnosisCode
+                ?: run {
+                    log.warn("No treatment found for patient $patientId — skipping supply entry")
+                    return@forEach
+                }
+
+            val steps = treatmentStepService.getTreatmentStepsByTreatmentName(treatmentName)
+                ?.sortedBy { it.stepNumber }
+                ?: run {
+                    log.warn("No treatment steps found for treatment '$treatmentName' (patient $patientId)")
+                    return@forEach
+                }
+
+            steps.forEach { step ->
+                step.task.supplies.forEach { supply ->
+                    suppliesAggregated[supply.supplyName] = (suppliesAggregated[supply.supplyName] ?: 0) + 1
+                }
+            }
+        }
+
+        val supplies = suppliesAggregated.map { (name, qty) -> Supply(itemName = name, quantity = qty) }
+        return SuppliesChecker(numberOfPatients = numberOfPatients, supplies = supplies)
+    }
+
+    fun sendSupplyRequest(
+        patientsNeeds: MutableList<DailyNeeds>,
+        scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
+        mode: String,
+        type: String
     ) {
         try {
             val sblHost = environmentConfig.getOrDefault("SBL_HOST", "localhost")
             val sblPort = environmentConfig.getOrDefault("SBL_PORT", "8092")
-            val endpoint = "http://$sblHost:$sblPort/api/supply-management/supplies"
+            val endpoint = if (type == "supplies") {
+                "http://$sblHost:$sblPort/api/supply-management/supplies"
+            } else {
+                "http://$sblHost:$sblPort/api/supply-management/supply-check"
+            }
 
-            val supplyChecker = buildSupplyChecker(patientsNeeds, scenario, mode)
+            val requestBody: Any = if (type == "supplies") {
+                buildSuppliesChecker(patientsNeeds, scenario, mode)
+            } else {
+                buildSupplyChecker(patientsNeeds, scenario, mode)
+            }
 
             val connection = URI(endpoint).toURL().openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
@@ -570,7 +631,7 @@ class AllocationController (
             connection.doOutput = true
 
             val objectMapper = jacksonObjectMapper()
-            val jsonString = objectMapper.writeValueAsString(supplyChecker)
+            val jsonString = objectMapper.writeValueAsString(requestBody)
             log.info("Sending supply request to $endpoint: $jsonString")
 
             connection.outputStream.use { outputStream ->
