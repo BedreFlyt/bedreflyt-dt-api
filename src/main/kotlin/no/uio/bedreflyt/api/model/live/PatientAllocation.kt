@@ -4,7 +4,7 @@ import jakarta.persistence.*
 import java.time.LocalDateTime
 
 @Entity
-@Table(name = "patient_allocation")
+@Table(name = "patient_allocation", uniqueConstraints = [UniqueConstraint(columnNames = ["patient_id", "simulated"])])
 class PatientAllocation (
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -12,7 +12,7 @@ class PatientAllocation (
     var id: Long? = null,
 
     @ManyToOne
-    @JoinColumn(name = "patient_id", referencedColumnName = "patient_id", unique = true)
+    @JoinColumn(name = "patient_id", referencedColumnName = "patient_id")
     var patientId : Patient,
 
     @Column(name = "acute")

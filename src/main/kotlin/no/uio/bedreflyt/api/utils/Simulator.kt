@@ -206,19 +206,36 @@ class Simulator (
         allocations: Map<Patient, PatientAllocation>,
         rooms: List<TreatmentRoom>,
         ward: Ward,
-        smtMode: String
+        smtMode: String,
+        targetWardName: String = ward.wardName
     ): Pair<SolverResponse, MutableMap<String, Long>> {
         val currentTime = System.currentTimeMillis()
         val numberOfRooms = rooms.size
         val capacities = rooms.map { it.capacity ?: 0 }
         val roomCategories: List<Long> = rooms.map { it.monitoringCategory.category.toLong() ?: 0 }
-        val penalties: List<Int> = rooms.map {
-            if (it.monitoringCategory.description == "Korridor") {
-                it.penalty.toInt()
-            } else if (it.monitoringCategory.description == "Midlertidig") {
-                it.penalty.toInt()
+
+        // Compute base penalties for rooms in the target ward
+        val basePenalties: List<Int> = rooms.map {
+            if (it.treatmentWard.wardName == targetWardName) {
+                if (it.monitoringCategory.description == "Korridor" || it.monitoringCategory.description == "Midlertidig") {
+                    it.penalty.toInt()
+                } else {
+                    0
+                }
             } else {
                 0
+            }
+        }
+        val maxBasePenalty = basePenalties.maxOrNull() ?: 0
+        val targetFloor = ward.wardFloor.floorNumber
+
+        val penalties: List<Int> = rooms.mapIndexed { idx, room ->
+            if (room.treatmentWard.wardName == targetWardName) {
+                basePenalties[idx]
+            } else {
+                val roomFloor = room.treatmentWard.wardFloor.floorNumber
+                val floorDistance = Math.abs(roomFloor - targetFloor)
+                maxOf(1, maxBasePenalty) * 10 * floorDistance
             }
         }
         val allowContagious : List<Boolean> = rooms.map { it.monitoringCategory.description != "Korridor" }
@@ -314,7 +331,8 @@ class Simulator (
         rooms: List<TreatmentRoom>,
         ward: Ward,
         tempDir: Path,
-        smtMode: String
+        smtMode: String,
+        targetWardName: String = ward.wardName
     ): Pair<SimulationResponse, SolverTimeLogging> {
         val scenarios = mutableListOf<List<Map<WardRoom, RoomInfo>>>()
         try {
@@ -325,7 +343,7 @@ class Simulator (
 
             needs.forEach { group ->
                 // Solve each day
-                val response = solve(group, patients, allocations, rooms, ward, smtMode)
+                val response = solve(group, patients, allocations, rooms, ward, smtMode, targetWardName)
                 log.info("Solved day with ${response.first.changes} changes")
                 if (response.first.changes != -1) {totalChanges += response.first.changes}
                 val solveData = response.first.allocations

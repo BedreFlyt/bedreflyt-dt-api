@@ -91,6 +91,7 @@ class AllocationController (
     )
     @PostMapping("/allocate")
     fun allocateRooms(@SwaggerRequestBody(description = "Request to allocate rooms for patients") @Valid @RequestBody allocationRequest: AllocationRequest): ResponseEntity<AllocationResponseDTO> {
+        log.info("Allocating rooms for ${allocationRequest.scenario.size} patients")
         allocationLock.lock()
         try {
             log.info("Allocating rooms for ${allocationRequest.scenario.size} patients")
@@ -101,7 +102,7 @@ class AllocationController (
                 hospitalCode = allocationRequest.hospitalCode,
                 isSimulated = false,
                 timeStep = 0,
-                adaptiveCapacity = allocationRequest.adaptative,
+                adaptiveCapacity = allocationRequest.adaptive,
                 smtMode = allocationRequest.smtMode
             )
 
@@ -154,6 +155,9 @@ class AllocationController (
             simulator.setIndexRoomMap(indexRoomMap)
 
             val filteredPatients = simulationResult.patientsNeeds[0].distinctBy { it.first } as DailyNeeds
+
+            log.info("Filtered patients for day 0: ${filteredPatients.size}")
+            log.info("Subset of filtered patients: ${filteredPatients.take(5).map { it.first.patientId }}")
             val res = simulator.simulate(
                 mutableListOf(filteredPatients),
                 databaseResult.patients,
@@ -161,15 +165,16 @@ class AllocationController (
                 databaseResult.rooms,
                 simulationResult.ward,
                 databaseResult.tempDir,
-                allocationRequest.smtMode
+                allocationRequest.smtMode,
+                context.wardName
             )
             val allocationResponse = res.first
             val allocationTimes = res.second
 
             // Process and return response
             return processAllocationResponse(
-                allocationResponse, allocationTimes, context, setupResult, 
-                simulationResult, setupResult.incomingPatients, startTime
+                allocationResponse, allocationTimes, context, setupResult,
+                simulationResult, setupResult.incomingPatients, startTime, databaseResult.rooms
             )
         } finally {
             allocationLock.unlock()
@@ -272,7 +277,8 @@ class AllocationController (
                 databaseResult.rooms,
                 simulationResult.ward,
                 databaseResult.tempDir,
-                allocationRequest.smtMode
+                allocationRequest.smtMode,
+                context.wardName
             )
             val allocationResponse = res.first
             val allocationTimes = res.second
@@ -280,8 +286,8 @@ class AllocationController (
 
             // Process and return response
             return processAllocationResponse(
-                allocationResponse, allocationTimes, context, setupResult, 
-                simulationResult, setupResult.incomingPatients, startTime
+                allocationResponse, allocationTimes, context, setupResult,
+                simulationResult, setupResult.incomingPatients, startTime, databaseResult.rooms
             )
         } finally {
             simulationLock.unlock()
@@ -408,7 +414,7 @@ class AllocationController (
                 smtMode = context.smtMode,
                 wardName = context.wardName,
                 hospitalCode = context.hospitalCode,
-                adaptative = context.adaptiveCapacity
+                adaptive = context.adaptiveCapacity
             )
         }
 
@@ -439,7 +445,8 @@ class AllocationController (
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
         mode: String
     ): DatabaseSetupResult? {
-        val rooms = roomService.getRoomsByWardHospital(context.wardName, context.hospitalCode)
+        val rooms = roomService.getAllRooms()
+            ?.filter { it.hospital.hospitalCode == context.hospitalCode }
             ?: return null
 
         createMaps(rooms, context.isSimulated)
@@ -461,7 +468,7 @@ class AllocationController (
                 smtMode = context.smtMode,
                 wardName = context.wardName,
                 hospitalCode = context.hospitalCode,
-                adaptative = context.adaptiveCapacity
+                adaptive = context.adaptiveCapacity
             )
         }
 
@@ -483,8 +490,10 @@ class AllocationController (
         setupResult: AllocationSetupResult,
         simulationResult: SimulationResult,
         incomingPatients: MutableList<Pair<Patient, String>>,
-        startTime: Long
+        startTime: Long,
+        rooms: List<TreatmentRoom>
     ): ResponseEntity<AllocationResponseDTO> {
+        val roomLookup: Map<Int, TreatmentRoom> = rooms.associateBy { it.roomNumber }
         return if (allocationResponse.allocations.isNotEmpty()) {
             // Save allocation results to database
             allocationResponse.allocations.forEach { allocationList ->
@@ -499,13 +508,16 @@ class AllocationController (
                                 if (patientAllocation != null) {
                                     if (patientAllocation.roomNumber == -1) {
                                         patientAllocation.roomNumber = room.roomNumber
-                                        patientAllocationService.updatePatientAllocation(patientAllocation)
                                     } else {
                                         val roomMapToUse = if (context.isSimulated) roomMapSim else roomMap
                                         patientAllocation.roomNumber =
                                             roomMapToUse[patientAllocation.roomNumber] ?: patientAllocation.roomNumber
-                                        patientAllocationService.updatePatientAllocation(patientAllocation)
                                     }
+                                    roomLookup[patientAllocation.roomNumber]?.let { treatmentRoom ->
+                                        patientAllocation.wardName = treatmentRoom.treatmentWard.wardName
+                                        patientAllocation.hospitalCode = treatmentRoom.hospital.hospitalCode
+                                    } ?: log.warn("No TreatmentRoom found for room number ${patientAllocation.roomNumber}")
+                                    patientAllocationService.updatePatientAllocation(patientAllocation)
                                 } else {
                                     log.warn("Could not find allocation for patient ${singlePatient.patientId}")
                                 }
