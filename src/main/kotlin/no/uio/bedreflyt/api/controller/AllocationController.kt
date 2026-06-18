@@ -162,7 +162,7 @@ class AllocationController (
             simulator.setIndexRoomMap(indexRoomMap)
 
             val supplyType = environmentConfig.getOrDefault("SUPPLY_TYPE", "supplies")
-            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode, supplyType)
+            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode, supplyType, allocationRequest.sbl)
 
             val filteredPatients = simulationResult.patientsNeeds[0].distinctBy { it.first } as DailyNeeds
 
@@ -277,7 +277,7 @@ class AllocationController (
             simulator.setIndexRoomMap(indexRoomMapSim)
 
             val supplyType = environmentConfig.getOrDefault("SUPPLY_TYPE", "supplies")
-            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode, supplyType)
+            sendSupplyRequest(simulationResult.patientsNeeds, allocationRequest.scenario, allocationRequest.mode, supplyType, allocationRequest.sbl)
 
             val cleaned = System.currentTimeMillis()
             log.info("Cleaned allocations in ${cleaned - afterNeeds}ms")
@@ -499,7 +499,8 @@ class AllocationController (
     private fun buildSupplyChecker(
         patientsNeeds: MutableList<DailyNeeds>,
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
-        mode: String
+        mode: String,
+        sbl: Boolean
     ): SupplyChecker {
         // Map patientId -> resolved treatment name from the incoming scenario.
         // When treatmentName is absent, resolve it from the diagnosis via the triplestore
@@ -552,13 +553,14 @@ class AllocationController (
             suppliesMap[patientId] = timestepSupplies
         }
 
-        return SupplyChecker(supplies = suppliesMap)
+        return SupplyChecker(supplies = suppliesMap, sbl = sbl)
     }
 
     private fun buildSuppliesChecker(
         patientsNeeds: MutableList<DailyNeeds>,
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
-        mode: String
+        mode: String,
+        sbl: Boolean
     ): SuppliesChecker {
         val scenarioTreatmentMap = scenario.associate { req ->
             val resolved = req.treatmentName
@@ -601,14 +603,15 @@ class AllocationController (
         }
 
         val supplies = suppliesAggregated.map { (name, qty) -> Supply(itemName = name, quantity = qty) }
-        return SuppliesChecker(numberOfPatients = numberOfPatients, supplies = supplies)
+        return SuppliesChecker(numberOfPatients = numberOfPatients, supplies = supplies, sbl = sbl)
     }
 
     fun sendSupplyRequest(
         patientsNeeds: MutableList<DailyNeeds>,
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
         mode: String,
-        type: String
+        type: String,
+        sbl: Boolean
     ) {
         try {
             val sblHost = environmentConfig.getOrDefault("SBL_HOST", "localhost")
@@ -620,9 +623,9 @@ class AllocationController (
             }
 
             val requestBody: Any = if (type == "supplies") {
-                buildSuppliesChecker(patientsNeeds, scenario, mode)
+                buildSuppliesChecker(patientsNeeds, scenario, mode, sbl)
             } else {
-                buildSupplyChecker(patientsNeeds, scenario, mode)
+                buildSupplyChecker(patientsNeeds, scenario, mode, sbl)
             }
 
             val connection = URI(endpoint).toURL().openConnection() as HttpURLConnection

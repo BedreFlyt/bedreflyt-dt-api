@@ -6,10 +6,12 @@ data class Supply(
 )
 
 data class SupplyChecker(
-    val supplies: Map<String, List<List<Supply>>>
+    val supplies: Map<String, List<List<Supply>>>,
+    val sbl: Boolean
 )
 
 data class SuppliesChecker(
     val numberOfPatients: Int,
-    val supplies: List<Supply>
+    val supplies: List<Supply>,
+    val sbl: Boolean
 )
