@@ -1,5 +1,7 @@
 package no.uio.bedreflyt.api.model.triplestore
 
+import com.fasterxml.jackson.annotation.JsonIgnore
+
 class TreatmentRoom (
     roomNumber: Int,
     capacity: Int,
@@ -8,6 +10,7 @@ class TreatmentRoom (
     val hospital: Hospital,
     val monitoringCategory: MonitoringCategory
 ) : Room (roomNumber, capacity, penalty) {
+    @get:JsonIgnore
     val ward: Ward
         get() = treatmentWard // Custom getter for SpEL compatibility
 

@@ -1,5 +1,6 @@
 package no.uio.bedreflyt.api.model.triplestore
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.io.Serializable
 
 data class Ward (
@@ -14,8 +15,10 @@ data class Ward (
         private const val serialVersionUID = 1L
     }
     
+    @get:JsonIgnore
     val hospital : Hospital
         get() = wardHospital // Custom getter for SpEL compatibility
+    @get:JsonIgnore
     val floor : Floor
         get() = wardFloor // Custom getter for SpEL compatibility
 

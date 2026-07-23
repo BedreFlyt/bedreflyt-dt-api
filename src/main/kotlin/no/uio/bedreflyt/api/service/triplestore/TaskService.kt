@@ -2,6 +2,7 @@ package no.uio.bedreflyt.api.service.triplestore
 
 import no.uio.bedreflyt.api.config.REPLConfig
 import no.uio.bedreflyt.api.config.TriplestoreProperties
+import no.uio.bedreflyt.api.model.triplestore.Supply
 import no.uio.bedreflyt.api.model.triplestore.Task
 import org.apache.jena.query.QuerySolution
 import org.apache.jena.query.ResultSet
@@ -9,6 +10,8 @@ import org.apache.jena.update.UpdateExecutionFactory
 import org.apache.jena.update.UpdateFactory
 import org.apache.jena.update.UpdateProcessor
 import org.apache.jena.update.UpdateRequest
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.springframework.cache.annotation.CacheEvict
 import org.springframework.cache.annotation.CachePut
 import org.springframework.cache.annotation.Cacheable
@@ -26,6 +29,7 @@ open class TaskService (
     private val ttlPrefix = triplestoreProperties.ttlPrefix
     private val repl = replConfig.repl()
     private val lock = ReentrantReadWriteLock()
+    private val log : Logger = LoggerFactory.getLogger(TaskService::class.java.name)
 
     @CacheEvict(value = ["tasks"], allEntries = true)
     @CachePut("tasks", key = "#taskName")
@@ -61,6 +65,40 @@ open class TaskService (
         }
     }
 
+    private fun getSuppliesForTasks (taskName: String) : List<Supply>? {
+        val supplies: MutableList<Supply> = mutableListOf()
+
+        val query = """
+            SELECT DISTINCT ?supplyName WHERE {
+                ?obj a prog:Task ;
+                    prog:Task_taskName "$taskName" ;
+                    prog:Task_supplies ?supplies .
+                ?supplies a prog:Supply;
+                    prog:Supply_supplyName ?supplyName .
+            }
+        """
+
+        val resultSupplies: ResultSet = repl.interpreter!!.query(query)!!
+
+        if (!resultSupplies.hasNext()) {
+            return null
+        }
+
+        while (resultSupplies.hasNext()) {
+            val solution: QuerySolution = resultSupplies.next()
+            val supplyName = solution.get("?supplyName").asLiteral().getString()
+            // Sometimes the label is not parsed properly and contains the language tag, so we remove it if present
+            val cleanedSupplyName = supplyName.replace("@en", "").trim()
+
+            val supplyNames = cleanedSupplyName.split("and").map { it.trim() }
+            for (name in supplyNames) {
+                supplies.add(Supply(name))
+            }
+        }
+
+        return supplies
+    }
+
     @Cacheable(value = ["tasks"], key = "'allTasks'")
     open fun getAllTasks() : List<Task>? {
         lock.readLock().lock()
@@ -69,10 +107,10 @@ open class TaskService (
 
             val query =
                 """
-           SELECT DISTINCT ?taskName ?averageDuration ?bedCategory WHERE {
-            ?obj a prog:Task ;
-                prog:Task_taskName ?taskName .
-        }"""
+           SELECT DISTINCT ?taskName WHERE {
+                ?obj a prog:Task ;
+                    prog:Task_taskName ?taskName .
+            }"""
 
             val resultTasks: ResultSet = repl.interpreter!!.query(query)!!
 
@@ -80,10 +118,15 @@ open class TaskService (
                 return null
             }
 
+            val taskNames: MutableList<String> = mutableListOf()
             while (resultTasks.hasNext()) {
                 val solution: QuerySolution = resultTasks.next()
-                val taskName = solution.get("?taskName").asLiteral().toString()
-                tasks.add(Task(taskName))
+                taskNames.add(solution.get("?taskName").asLiteral().getString())
+            }
+
+            for (taskName in taskNames) {
+                val supplies = getSuppliesForTasks(taskName)
+                tasks.add(Task(taskName, supplies ?: emptyList()))
             }
 
             return tasks
@@ -111,8 +154,10 @@ open class TaskService (
             }
 
             val solution: QuerySolution = resultTask.next()
+            val taskNameResult = solution.get("?taskName").asLiteral().getString()
+            val supplies = getSuppliesForTasks(taskNameResult)
 
-            return Task(taskName)
+            return Task(taskNameResult, supplies ?: emptyList())
         } finally {
             lock.readLock().unlock()
         }
