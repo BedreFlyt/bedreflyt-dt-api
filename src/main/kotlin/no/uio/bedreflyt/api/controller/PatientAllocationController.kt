@@ -77,7 +77,7 @@ class PatientAllocationController (
         ApiResponse(responseCode = "403", description = "Accessing the resource you were trying to reach is forbidden"),
         ApiResponse(responseCode = "500", description = "Internal server error")
     ])
-    @PostMapping(produces = ["application/json"])
+    @PostMapping("/odrl", produces = ["application/json"])
     fun getODRLPatientAllocation(@SwaggerRequestBody(description = "Request to get a patient allocation by patientId") @Valid @RequestBody request: PrivacyPatientAllocationRequest) : ResponseEntity<Map<String, Any>> {
         log.info("ODRL plant request userId=$request.userId subjectId=${request.patientId} actionType=$request.actionType purposeName=$request.purposeName")
 
