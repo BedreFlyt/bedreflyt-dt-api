@@ -41,7 +41,7 @@ dependencies {
     implementation("org.slf4j:slf4j-api:${sl4jVersion}")
     implementation("org.slf4j:slf4j-simple:${sl4jVersion}")
     // SMOL
-    implementation("com.github.smolang:SemanticObjects:9b684fedbb") {
+    implementation("com.github.sievericcardo:SemanticObjects:3068fc47ac") {
         exclude group: 'org.slf4j', module: 'slf4j-simple'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-reflect'
         exclude group: 'com.fasterxml.jackson.module', module: 'jackson-module-kotlin'

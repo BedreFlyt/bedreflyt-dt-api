@@ -11,7 +11,6 @@ import no.uio.bedreflyt.api.service.live.PatientAllocationService
 import no.uio.bedreflyt.api.service.live.PatientService
 import no.uio.bedreflyt.api.service.triplestore.RoomService
 import no.uio.bedreflyt.api.types.*
-import org.apache.jena.ext.com.google.common.hash.Hasher
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service

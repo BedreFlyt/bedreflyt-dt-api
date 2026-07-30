@@ -128,7 +128,7 @@ class FusekiController (
         println(uploadResponse)
 
         val repl = replConfig.repl()
-        repl.interpreter!!.tripleManager.regenerateTripleStoreModel()
+        repl.interpreter!!.tripleManager.regenerateTripleStoreModel(tripleStore)
         repl.interpreter!!.evalCall(
             repl.interpreter!!.getObjectNames("AssetModel")[0],
             "AssetModel",

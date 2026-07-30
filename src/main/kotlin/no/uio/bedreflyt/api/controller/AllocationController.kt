@@ -7,7 +7,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import jakarta.validation.Valid
 import no.uio.bedreflyt.api.config.EnvironmentConfig
 import no.uio.bedreflyt.api.model.live.Patient
-import no.uio.bedreflyt.api.model.live.PatientAllocation
 import no.uio.bedreflyt.api.model.live.PatientTrajectory
 import no.uio.bedreflyt.api.model.triplestore.TreatmentRoom
 import io.swagger.v3.oas.annotations.parameters.RequestBody as SwaggerRequestBody
@@ -45,7 +44,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.nio.file.Files
@@ -53,9 +51,6 @@ import java.nio.file.Path
 import java.time.LocalDateTime
 import java.util.*
 import java.util.concurrent.locks.ReentrantLock
-import kotlin.collections.get
-import kotlin.text.contains
-import kotlin.text.toLong
 
 @RestController
 @RequestMapping("/api/v1/allocation")

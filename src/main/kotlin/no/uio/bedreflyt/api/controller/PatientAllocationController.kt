@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.responses.ApiResponse
 import io.swagger.v3.oas.annotations.responses.ApiResponses
 import jakarta.validation.Valid
+import no.uio.bedreflyt.api.config.REPLConfig
 import no.uio.bedreflyt.api.model.live.PatientAllocation
 import io.swagger.v3.oas.annotations.parameters.RequestBody as SwaggerRequestBody
 import no.uio.bedreflyt.api.service.live.PatientAllocationService
@@ -15,6 +16,7 @@ import no.uio.bedreflyt.api.service.triplestore.RoomService
 import no.uio.bedreflyt.api.types.AllocationResponseDTO
 import no.uio.bedreflyt.api.types.PatientAllocationRequest
 import no.uio.bedreflyt.api.types.UpdatePatientAllocationRequest
+import no.uio.bedreflyt.api.types.PrivacyPatientAllocationRequest
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
@@ -29,10 +31,12 @@ class PatientAllocationController (
     private val patientAllocationService : PatientAllocationService,
     private val patientTrajectoryService: PatientTrajectoryService,
     private val roomService: RoomService,
-    private val monitoringCategoryService: MonitoringCategoryService
+    private val monitoringCategoryService: MonitoringCategoryService,
+    private val replConfig: REPLConfig
 ) {
 
     private val log : Logger = LoggerFactory.getLogger(PatientAllocationController::class.java.name)
+    private val repl = replConfig.repl()
 
     @Operation(summary = "Create a new patient allocation")
     @ApiResponses(value = [
@@ -63,6 +67,60 @@ class PatientAllocationController (
         patientAllocationService.savePatientAllocation(patientAllocation)
 
         return ResponseEntity.ok("Patient allocation created")
+    }
+
+    @Operation(summary = "Create a new patient allocation")
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "200", description = "Patient allocation created"),
+        ApiResponse(responseCode = "400", description = "Invalid patient allocation"),
+        ApiResponse(responseCode = "401", description = "Unauthorized"),
+        ApiResponse(responseCode = "403", description = "Accessing the resource you were trying to reach is forbidden"),
+        ApiResponse(responseCode = "500", description = "Internal server error")
+    ])
+    @PostMapping(produces = ["application/json"])
+    fun getODRLPatientAllocation(@SwaggerRequestBody(description = "Request to get a patient allocation by patientId") @Valid @RequestBody request: PrivacyPatientAllocationRequest) : ResponseEntity<Map<String, Any>> {
+        log.info("ODRL plant request userId=$request.userId subjectId=${request.patientId} actionType=$request.actionType purposeName=$request.purposeName")
+
+        val (isAllowed, timeValue)  = repl.interpreter!!.odrlQuery(request.userId, request.patientId, request.actionType, request.purposeName, request.attributes)
+
+        if (!isAllowed) {
+            val message =
+                "Resource '${request.patientId}' cannot be accessed for action '${request.actionType}' and purpose '${request.purposeName}'."
+            log.warn("ODRL denied access for subject ${request.patientId}")
+            return ResponseEntity.status(403).body(
+                mapOf(
+                    "allowed" to false,
+                    "time" to timeValue,
+                    "message" to message
+                )
+            )
+        }
+
+        val patient = patientService.findByPatientId(request.patientId)
+            ?: return ResponseEntity.status(404).body(
+                mapOf(
+                    "allowed" to true,
+                    "time" to timeValue,
+                    "message" to "Patient with ID '${request.patientId}' not found."
+                )
+            )
+
+        val patientAllocation = patientAllocationService.findByPatientId(patient)
+            ?: return ResponseEntity.status(404).body(
+                mapOf(
+                    "allowed" to true,
+                    "time" to timeValue,
+                    "message" to "Patient allocation with ID '${request.patientId}' not found."
+                )
+            )
+
+        return ResponseEntity.ok(
+            mapOf(
+                "allowed" to true,
+                "time" to timeValue,
+                "patientAllocation" to patientAllocation
+            )
+        )
     }
 
     @Operation(summary = "Get all patient allocations")

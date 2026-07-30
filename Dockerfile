@@ -1,5 +1,5 @@
 # Build stage
-FROM gradle:8.5-jdk21 AS build
+FROM gradle:9.6.0-jdk21 AS build
 
 # Set the working directory
 WORKDIR /app
