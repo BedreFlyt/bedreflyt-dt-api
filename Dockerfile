@@ -1,5 +1,5 @@
 # Build stage
-FROM gradle:8.5-jdk21 AS build
+FROM gradle:9.7-jdk25 AS build
 
 # Set the working directory
 WORKDIR /app
@@ -10,13 +10,14 @@ COPY gradle ./gradle
 
 # Copy source code
 COPY src ./src
+COPY buildSrc ./buildSrc
 
-# Build the application
-RUN gradle bootJar --no-daemon && \
+# Build the application and abs model
+RUN gradle bootJar compileAbs --no-daemon && \
     rm -f /app/build/libs/*-plain.jar
 
 # Use an official OpenJDK runtime as a parent image
-FROM openjdk:24-ea-oraclelinux8
+FROM openjdk:25-ea-oraclelinux8
 
 # Set the working directory in the container
 WORKDIR /app
@@ -25,7 +26,7 @@ WORKDIR /app
 COPY --from=build /app/build/libs/bedreflyt-api-*.jar /app/bedreflyt-api.jar
 
 # Copy the external jar file to the container
-COPY bedreflyt.jar /app/bedreflyt.jar
+COPY --from=build /app/build/abs/bedreflyt.jar /app/bedreflyt.jar
 
 # Copy the smol file
 COPY src/main/resources/SMOL /app/SMOL
