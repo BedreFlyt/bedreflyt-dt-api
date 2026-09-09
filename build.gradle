@@ -1,7 +1,9 @@
 plugins {
-    id 'org.jetbrains.kotlin.jvm' version '2.0.0'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.20'
     id 'org.springframework.boot' version '3.4.2'
     id 'io.spring.dependency-management' version '1.1.5'
+    // Source in buildSrc
+    id "abs.compile-abs"
 }
 
 group = 'no.uio'
@@ -17,7 +19,7 @@ repositories {
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
 
@@ -120,6 +122,23 @@ jar {
     enabled = false
 }
 
-kotlin {
-    jvmToolchain(21)
+springBoot {
+    // workaround for 'Task :resolveMainClassName FAILED' since our
+    // Spring boot version can't parse Java 25 class files
+    mainClass = 'no.uio.bedreflyt.api.API'
 }
+
+kotlin {
+    jvmToolchain(25)
+}
+
+// create build/abs/bedreflyt.jar
+task compileAbs(type: Exec, dependsOn: downloadAbsFrontend) {
+    description = 'Creates bedreflyt.jar'
+    inputs.dir 'src/main/abs'
+    outputs.dir 'build/abs'
+    commandLine 'java', '-jar', project.ext.absToolsDir.toString() + '/absfrontend.jar', '--java', '-d', 'build/abs/',
+        'src/main/abs/bedreflyt.abs', '-o', 'build/abs/bedreflyt.jar'
+}
+
+build.dependsOn 'compileAbs'
