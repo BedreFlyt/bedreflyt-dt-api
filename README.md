@@ -14,7 +14,7 @@ This API manages hospital resources, patient allocations, and treatment simulati
 ## Architecture
 
 ### Technology Stack
-- **Language**: Kotlin with Java 21
+- **Language**: Kotlin with Java 25
 - **Framework**: Spring Boot 3.4.2
 - **Build Tool**: Gradle 8.x
 - **Database**: PostgreSQL (primary) / SQLite (simulation)
