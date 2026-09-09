@@ -1,0 +1,92 @@
+// Use Gradle's cache directory for downloaded files
+ext {
+    absToolsDir = new File("${gradle.gradleUserHomeDir}/caches/abstools")
+}
+
+dependencies {
+    // The ABS compiler
+    implementation files(new File(project.ext.absToolsDir, "absfrontend.jar"))
+}
+
+task downloadAbsFrontend {
+    description 'Downloads the latest absfrontend.jar from GitHub releases'
+    def taskAbsToolsDir = project.ext.absToolsDir
+    def taskAbsDownloadsDir = new File(taskAbsToolsDir, "/downloads")
+
+    doLast {
+        def jarFile = new File(taskAbsToolsDir, "absfrontend.jar")
+
+        try {
+            logger.lifecycle("Checking for latest absfrontend.jar...")
+            taskAbsDownloadsDir.mkdirs()
+            def apiUrl = new java.net.URL("https://api.github.com/repos/abstools/abstools/releases/latest")
+            def connection = apiUrl.openConnection()
+            connection.setConnectTimeout(5000)  // 5 second timeout
+            connection.setReadTimeout(5000)
+            // GitHub API may require a User-Agent header
+            connection.setRequestProperty("User-Agent", "Gradle Build")
+
+            def jsonText = connection.getInputStream().getText()
+            def json = new groovy.json.JsonSlurper().parseText(jsonText)
+            def version = json.tag_name.toString()
+            if (version.startsWith('v')) {
+                version = version.substring(1)  // Remove 'v' prefix if present
+            }
+            def jarAsset = json.assets.find { it.name == "absfrontend.jar" }
+            if (jarAsset) {
+                def versionedJarName = "absfrontend-${version}.jar"
+                def versionedJarFile = new File(taskAbsDownloadsDir, versionedJarName)
+                if (versionedJarFile.exists()) {
+                    logger.lifecycle("Version ${version} already downloaded at ${versionedJarFile.absolutePath}")
+                } else {
+                    def downloadUrl = jarAsset.browser_download_url
+                    logger.lifecycle("Found latest version ${version} at: ${downloadUrl}")
+                    // Delete any previous absfrontend jar files
+                    taskAbsDownloadsDir.listFiles().each { file ->
+                        if (file.name.startsWith("absfrontend-") && file.name.endsWith(".jar")) {
+                            logger.lifecycle("Deleting old version: ${file.name}")
+                            file.delete()
+                        }
+                    }
+                    def jarConnection = new java.net.URL(downloadUrl).openConnection()
+                    jarConnection.setRequestProperty("User-Agent", "Gradle Build")
+                    try (def inputStream = jarConnection.getInputStream()) {
+                        java.nio.file.Files.copy(inputStream, versionedJarFile.toPath(),
+                                                 java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    }
+                    logger.lifecycle("Successfully downloaded absfrontend.jar version ${version} to ${versionedJarFile.absolutePath}")
+                }
+                java.nio.file.Files.copy(versionedJarFile.toPath(), jarFile.toPath(),
+                                         java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                logger.lifecycle("Copied ${versionedJarFile.absolutePath} to ${jarFile.absolutePath}")
+            } else {
+                throw new GradleException("Could not find absfrontend.jar in the latest release")
+            }
+        } catch (Exception e) {
+            // Network failure or other error - try to use existing version
+            logger.warn("Check for absfrontend.jar failed with error: ${e.message}")
+            if (jarFile.exists()) {
+                logger.lifecycle("Continuing with existing absfrontend.jar at ${jarFile.absolutePath}")
+            } else {
+                // Check if we have any existing versioned jar files
+                def existingJars = []
+                if (taskAbsDownloadsDir.exists()) {
+                    existingJars = taskAbsDownloadsDir.listFiles().findAll { file ->
+                        file.name.startsWith("absfrontend-") && file.name.endsWith(".jar")
+                    }
+                }
+                if (existingJars) {
+                    // Sort to get the most recent version (assuming semantic versioning in filename)
+                    def latestExisting = existingJars.sort { it.name }.last()
+                    logger.lifecycle("Continuing with latest downloaded version: ${latestExisting.name}")
+                    java.nio.file.Files.copy(latestExisting.toPath(), jarFile.toPath(),
+                                             java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    logger.lifecycle("Copied ${latestExisting.absolutePath} to ${jarFile.absolutePath}")
+                } else {
+                    // No existing version available
+                    throw new GradleException("Cannot download absfrontend.jar (offline?) and no existing version found, aborting.")
+                }
+            }
+        }
+    }
+}
