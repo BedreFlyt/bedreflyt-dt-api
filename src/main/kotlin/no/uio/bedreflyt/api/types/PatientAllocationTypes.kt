@@ -74,3 +74,22 @@ data class UpdatePatientAllocationRequest (
     @Pattern(regexp = "^[0-9]+$", message = "Room number is invalid")
     val newRoomNumber: Int?
 )
+
+data class PrivacyPatientAllocationRequest (
+    @param:NotBlank(message = "Privacy level is required")
+    @param:NotNull(message = "Privacy level is required")
+    val userId: String,
+    @param:NotBlank(message = "Patient ID is required")
+    @param:NotNull(message = "Patient ID is required")
+    @param:Pattern(regexp = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", message = "Patient ID is invalid")
+    val patientId: String,
+    @param:NotBlank(message = "Action type is required")
+    @param:NotNull(message = "Action type is required")
+    val actionType: String,
+    @param:NotBlank(message = "Purpose name is required")
+    @param:NotNull(message = "Purpose name is required")
+    val purposeName: String,
+    @param:NotBlank(message = "Attributes are required")
+    @param:NotNull(message = "Attributes are required")
+    val attributes: List<String>
+)

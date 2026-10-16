@@ -3,6 +3,7 @@ package no.uio.bedreflyt.api.service.simulation
 import no.uio.bedreflyt.api.model.live.Patient
 import no.uio.bedreflyt.api.model.live.PatientAllocation
 import no.uio.bedreflyt.api.model.simulation.Room
+import no.uio.bedreflyt.api.model.triplestore.TreatmentRoom
 import no.uio.bedreflyt.api.model.triplestore.Ward
 import no.uio.bedreflyt.api.service.live.PatientAllocationService
 import no.uio.bedreflyt.api.service.live.PatientService
@@ -139,6 +140,16 @@ class DatabaseService (
     }
 
     fun createAndPopulateRooms(roomDbUrl: String, ward: Ward): List<Room> {
+        val rooms = roomService.getRoomsByWardHospital(ward.wardName, ward.wardHospital.hospitalCode)
+            ?: throw IllegalArgumentException("No room distributions found")
+        return createAndPopulateRooms(roomDbUrl, rooms)
+    }
+
+    /// Populate the temporary DB from an explicit room list. This lets a
+    /// multi-ward run use every room of the hospital even when the requested
+    /// ward has no rooms there, instead of failing with "No room distributions
+    /// found".
+    fun createAndPopulateRooms(roomDbUrl: String, rooms: List<TreatmentRoom>): List<Room> {
         val categories = monitoringCategoryService.getAllCategories()
 
         categories?.let {
@@ -147,8 +158,9 @@ class DatabaseService (
             }
         } ?: throw IllegalArgumentException("No rooms found")
 
-        val rooms = roomService.getRoomsByWardHospital(ward.wardName, ward.wardHospital.hospitalCode)
-            ?: throw IllegalArgumentException("No room distributions found")
+        if (rooms.isEmpty()) {
+            throw IllegalArgumentException("No room distributions found")
+        }
         val simulationRoom = mutableListOf<Room>()
 
         rooms.forEachIndexed { index, singleRoom ->

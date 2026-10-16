@@ -11,7 +11,6 @@ import no.uio.bedreflyt.api.service.live.PatientAllocationService
 import no.uio.bedreflyt.api.service.live.PatientService
 import no.uio.bedreflyt.api.service.triplestore.RoomService
 import no.uio.bedreflyt.api.types.*
-import org.apache.jena.ext.com.google.common.hash.Hasher
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -289,7 +288,13 @@ class Simulator (
         val elapsedTime = System.currentTimeMillis() - currentTime
         times["prepareDataForSolve"] = elapsedTime
 
-        log.info("Invoking solver with  ${solverRequest.no_rooms} rooms, ${solverRequest.no_patients} patients in mode ${solverRequest.mode}")
+        log.info(
+            "Invoking solver with ${solverRequest.no_rooms} rooms " +
+                "(capacity ${capacities.sum()}, categories ${roomCategories.groupingBy { it }.eachCount()}, " +
+                "wards ${rooms.groupingBy { it.treatmentWard.wardName }.eachCount()}), " +
+                "${solverRequest.no_patients} patients " +
+                "(needs ${patientDistances.groupingBy { it }.eachCount()}) in mode ${solverRequest.mode}"
+        )
 
         if (patientNumbers > 0) {
             val res = invokeSolver(solverRequest, patientMap, rooms)

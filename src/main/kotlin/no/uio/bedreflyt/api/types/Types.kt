@@ -9,7 +9,14 @@ data class SimulationRequest(
     val wardName: String,
     val hospitalCode: String,
     val adaptive: Boolean = true,
-    val sbl: Boolean = true
+    val sbl: Boolean = true,
+    // "managed" when the network manager orchestrates the allocation,
+    // "independent" when this twin acts on its own. Tags the run and is echoed
+    // back in the adaptation metrics; it does not change the policy.
+    val executionMode: String = "managed",
+    // When true the twin may place patients in any ward of the hospital; when
+    // false (default) only the requested ward's rooms are used.
+    val multiWard: Boolean = false
 )
 
 data class TriggerAllocationRequest (
@@ -24,7 +31,11 @@ data class AllocationSimulationRequest(
     val hospitalCode: String,
     val timeStep: Long,
     val adaptiveCapacity: Boolean = true,
-    val sbl: Boolean = true
+    val sbl: Boolean = true,
+    val executionMode: String = "managed",
+    // When true the twin may place patients in any ward of the hospital; when
+    // false (default) only the requested ward's rooms are used.
+    val multiWard: Boolean = false
 )
 
 data class WardRoom(
@@ -47,10 +58,25 @@ data class RoomAllocationDTO(
     val gender: String
 )
 
+// Metrics describing how much this digital twin had to adapt during a run.
+// Reported per allocation call so experiments can compare "managed" (network
+// orchestrated) against "independent" (standalone twin) executions.
+data class AdaptationMetrics(
+    val executionMode: String,
+    // Room changes / reallocations produced by the solver.
+    val roomChanges: Int,
+    // Whether room opening (adaptive capacity) was enabled for this run.
+    val adaptiveCapacity: Boolean,
+    val lifecycleManagerTimeMs: Long,
+    val componentsRetrievalTimeMs: Long,
+    val solverTimeMs: Long
+)
+
 data class AllocationResponseDTO(
     val allocations: List<List<List<RoomAllocationDTO>>>,
     val changes: Int,
-    val executions: CompleteTimeLogging? = null
+    val executions: CompleteTimeLogging? = null,
+    val adaptationMetrics: AdaptationMetrics? = null
 )
 
 typealias Allocation = Map<WardRoom, RoomInfo?>

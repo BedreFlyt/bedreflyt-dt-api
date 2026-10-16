@@ -12,7 +12,11 @@ data class AllocationContext(
     val isSimulated: Boolean,
     val timeStep: Long = 0,
     val adaptiveCapacity: Boolean = false,
-    val smtMode: String
+    val smtMode: String,
+    val executionMode: String = "managed",
+    // When true the twin may use every ward of the hospital; when false only
+    // the requested ward's rooms are considered.
+    val multiWard: Boolean = false
 )
 
 data class AllocationSetupResult(

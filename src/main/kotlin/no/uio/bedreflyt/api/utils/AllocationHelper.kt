@@ -229,7 +229,13 @@ class AllocationHelper (
         updatePatientNeeds(simulationNeeds, databaseResult.trajectories, patientNeeds, context.isSimulated)
         updateAllocations(patientNeeds, context.timeStep, context.isSimulated)
 
+        // The requested ward normally exists. When it does not (e.g. a
+        // multi-ward run asking for a ward this hospital has no beds for), fall
+        // back to any ward of the hospital so the run can still proceed: the
+        // solver then uses all of the hospital's rooms and every placement is a
+        // low-scoring fallback, which is exactly the intended behaviour.
         val ward = wardService.getWardByNameAndHospital(context.wardName, context.hospitalCode)
+            ?: databaseResult.rooms.firstOrNull()?.treatmentWard
             ?: return null
 
         // Create complete patient allocations map

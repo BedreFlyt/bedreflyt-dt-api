@@ -7,7 +7,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import jakarta.validation.Valid
 import no.uio.bedreflyt.api.config.EnvironmentConfig
 import no.uio.bedreflyt.api.model.live.Patient
-import no.uio.bedreflyt.api.model.live.PatientAllocation
 import no.uio.bedreflyt.api.model.live.PatientTrajectory
 import no.uio.bedreflyt.api.model.triplestore.TreatmentRoom
 import io.swagger.v3.oas.annotations.parameters.RequestBody as SwaggerRequestBody
@@ -19,6 +18,7 @@ import no.uio.bedreflyt.api.service.triplestore.RoomService
 import no.uio.bedreflyt.api.service.triplestore.TreatmentService
 import no.uio.bedreflyt.api.service.triplestore.TreatmentStepService
 import no.uio.bedreflyt.api.service.triplestore.WardService
+import no.uio.bedreflyt.api.types.AdaptationMetrics
 import no.uio.bedreflyt.api.types.AllocationContext
 import no.uio.bedreflyt.api.utils.Simulator
 import org.springframework.web.bind.annotation.RequestMapping
@@ -45,7 +45,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.nio.file.Files
@@ -53,9 +52,6 @@ import java.nio.file.Path
 import java.time.LocalDateTime
 import java.util.*
 import java.util.concurrent.locks.ReentrantLock
-import kotlin.collections.get
-import kotlin.text.contains
-import kotlin.text.toLong
 
 @RestController
 @RequestMapping("/api/v1/allocation")
@@ -110,7 +106,9 @@ class AllocationController (
                 isSimulated = false,
                 timeStep = 0,
                 adaptiveCapacity = allocationRequest.adaptive,
-                smtMode = allocationRequest.smtMode
+                smtMode = allocationRequest.smtMode,
+                executionMode = allocationRequest.executionMode,
+                multiWard = allocationRequest.multiWard
             )
 
             // Initialize allocation
@@ -120,6 +118,23 @@ class AllocationController (
             // Setup database
             val databaseResult = setupDatabase(context, allocationRequest.scenario, allocationRequest.mode)
                 ?: return ResponseEntity.badRequest().build()
+
+            // Fast unsat: a single-ward run can never exceed the requested
+            // ward's own capacity, so reject without invoking the solver. This
+            // keeps the manager's single-ward pass fast instead of grinding on a
+            // tight z3 model.
+            if (!context.multiWard) {
+                val wardCapacity = databaseResult.rooms.sumOf { it.capacity ?: 0 }
+                val demand = setupResult.incomingPatients.map { it.first.patientId }.distinct().size
+                if (demand > wardCapacity) {
+                    log.info(
+                        "Single-ward run: {} patients exceed ward {} capacity {} — unsat",
+                        demand, context.wardName, wardCapacity
+                    )
+                    allocationHelper.handleEmptyAllocations(setupResult.incomingPatients)
+                    return ResponseEntity.badRequest().build()
+                }
+            }
 
             // Create patient allocations
             val allocations = allocationHelper.createPatientAllocations(context, setupResult.incomingPatients)
@@ -134,10 +149,15 @@ class AllocationController (
             allocationHelper.removeUnusedAllocations(simulationResult.simulationNeeds[0])
             
             // Add existing allocated patients (roomNumber != -1) and their trajectories
-            val existingAllocatedPatients = patientAllocationService.findAll()
-                ?.filter { it.wardName == context.wardName && it.hospitalCode == context.hospitalCode }
-                ?.filter { it.simulated == context.isSimulated }
-                ?.filter { it.roomNumber != -1 }
+            val existingAllocatedPatients = if (context.isSimulated) {
+                patientAllocationService.findByWardNameAndHospitalCodeSimulated(
+                    context.wardName, context.hospitalCode
+                )
+            } else {
+                patientAllocationService.findByWardNameAndHospitalCode(
+                    context.wardName, context.hospitalCode
+                )
+            }?.filter { it.roomNumber != -1 }
             
             existingAllocatedPatients?.forEach { allocation ->
                 // Add to patient allocations if not already present
@@ -218,7 +238,9 @@ class AllocationController (
                 isSimulated = true,
                 timeStep = allocationRequest.timeStep,
                 adaptiveCapacity = allocationRequest.adaptiveCapacity,
-                smtMode = allocationRequest.smtMode
+                smtMode = allocationRequest.smtMode,
+                executionMode = allocationRequest.executionMode,
+                multiWard = allocationRequest.multiWard
             )
 
             // Initialize allocation
@@ -228,6 +250,23 @@ class AllocationController (
             // Setup database
             val databaseResult = setupDatabase(context, allocationRequest.scenario, allocationRequest.mode)
                 ?: return ResponseEntity.badRequest().build()
+
+            // Fast unsat: a single-ward run can never exceed the requested
+            // ward's own capacity, so reject without invoking the solver. This
+            // keeps the manager's single-ward pass fast instead of grinding on a
+            // tight z3 model.
+            if (!context.multiWard) {
+                val wardCapacity = databaseResult.rooms.sumOf { it.capacity ?: 0 }
+                val demand = setupResult.incomingPatients.map { it.first.patientId }.distinct().size
+                if (demand > wardCapacity) {
+                    log.info(
+                        "Single-ward run: {} patients exceed ward {} capacity {} — unsat",
+                        demand, context.wardName, wardCapacity
+                    )
+                    allocationHelper.handleEmptyAllocations(setupResult.incomingPatients)
+                    return ResponseEntity.badRequest().build()
+                }
+            }
 
             // Create patient allocations
             val allocations = allocationHelper.createPatientAllocations(context, setupResult.incomingPatients)
@@ -249,10 +288,15 @@ class AllocationController (
             allocationHelper.removeUnusedAllocations(simulationResult.simulationNeeds[0])
             
             // Add existing allocated patients (roomNumber != -1) and their trajectories
-            val existingAllocatedPatients = patientAllocationService.findAll()
-                ?.filter { it.wardName == context.wardName && it.hospitalCode == context.hospitalCode }
-                ?.filter { it.simulated == context.isSimulated }
-                ?.filter { it.roomNumber != -1 }
+            val existingAllocatedPatients = if (context.isSimulated) {
+                patientAllocationService.findByWardNameAndHospitalCodeSimulated(
+                    context.wardName, context.hospitalCode
+                )
+            } else {
+                patientAllocationService.findByWardNameAndHospitalCode(
+                    context.wardName, context.hospitalCode
+                )
+            }?.filter { it.roomNumber != -1 }
             
             existingAllocatedPatients?.forEach { allocation ->
                 // Add to patient allocations if not already present
@@ -376,9 +420,8 @@ class AllocationController (
         }
     }
 
-    private fun populateDatabase(bedreflytDB: String, allocationRequest: SimulationRequest): Pair<MutableMap<String, Patient>, List<PatientTrajectory>> {
-        val ward = wardService.getWardByNameAndHospital(allocationRequest.wardName, allocationRequest.hospitalCode) ?: throw IllegalArgumentException("Invalid ward or hospital")
-        databaseService.createAndPopulateRooms(bedreflytDB, ward)
+    private fun populateDatabase(bedreflytDB: String, allocationRequest: SimulationRequest, rooms: List<TreatmentRoom>): Pair<MutableMap<String, Patient>, List<PatientTrajectory>> {
+        databaseService.createAndPopulateRooms(bedreflytDB, rooms)
         val patients = databaseService.createAndPopulatePatientTables(bedreflytDB, allocationRequest.scenario, allocationRequest.mode).toMutableMap()
         val trajectories = patientTrajectoryService.findAll() ?: listOf()
         trajectories.forEach { trajectory ->
@@ -403,9 +446,15 @@ class AllocationController (
         }
 
         // Get current patients
-        val currentPatients = patientAllocationService.findAll()
-            ?.filter { it.wardName == context.wardName && it.hospitalCode == context.hospitalCode }
-            ?.filter { it.simulated == context.isSimulated }
+        val currentPatients = if (context.isSimulated) {
+            patientAllocationService.findByWardNameAndHospitalCodeSimulated(
+                context.wardName, context.hospitalCode
+            )
+        } else {
+            patientAllocationService.findByWardNameAndHospitalCode(
+                context.wardName, context.hospitalCode
+            )
+        }
 
         val patientTrajectories = currentPatients?.mapNotNull { patient ->
             patientTrajectoryService.findByPatientId(patient.patientId)
@@ -458,9 +507,30 @@ class AllocationController (
         scenario: List<no.uio.bedreflyt.api.types.ScenarioRequest>,
         mode: String
     ): DatabaseSetupResult? {
-        val rooms = roomService.getAllRooms()
+        val hospitalRooms = roomService.getAllRooms()
             ?.filter { it.hospital.hospitalCode == context.hospitalCode }
             ?: return null
+
+        // multiWard = false: ONLY the requested ward may be used. If it cannot
+        // take the patients the twin must report unsat — it must never fall back
+        // to another ward.
+        // multiWard = true: every ward of the hospital may be used.
+        val rooms = if (context.multiWard) {
+            hospitalRooms
+        } else {
+            hospitalRooms.filter { it.treatmentWard.wardName == context.wardName }
+        }
+
+        // No rooms can be used (e.g. a single-ward run whose ward has no beds
+        // at this hospital): report unsat (400) instead of throwing a 500 from
+        // the database population.
+        if (rooms.isEmpty()) {
+            log.info(
+                "No rooms available for ward {} at {} (multiWard={}) — unsat",
+                context.wardName, context.hospitalCode, context.multiWard
+            )
+            return null
+        }
 
         createMaps(rooms, context.isSimulated)
 
@@ -485,7 +555,7 @@ class AllocationController (
             )
         }
 
-        val (patients, trajectories) = populateDatabase(bedreflytDB, request)
+        val (patients, trajectories) = populateDatabase(bedreflytDB, request, rooms)
 
         return DatabaseSetupResult(
             rooms = rooms,
@@ -662,7 +732,16 @@ class AllocationController (
         rooms: List<TreatmentRoom>
     ): ResponseEntity<AllocationResponseDTO> {
         val roomLookup: Map<Int, TreatmentRoom> = rooms.associateBy { it.roomNumber }
-        return if (allocationResponse.allocations.isNotEmpty()) {
+        // A 200 with an empty placement list would look like success to the
+        // callers. Only answer 200 when at least one patient was actually placed
+        // in a room; otherwise report unsat (400) so the baseline records the
+        // failure and the manager falls back.
+        val placedAny = allocationResponse.allocations.any { day ->
+            day.any { allocation ->
+                allocation.values.any { info -> !info?.patients.isNullOrEmpty() }
+            }
+        }
+        return if (placedAny) {
             // Save allocation results to database
             allocationResponse.allocations.forEach { allocationList ->
                 allocationList.forEach { allocation ->
@@ -670,9 +749,9 @@ class AllocationController (
                         val allocatedPatients = roomInfo?.patients
                         if (!allocatedPatients.isNullOrEmpty()) {
                             allocatedPatients.forEach { singlePatient ->
-                                val patientAllocation = patientAllocationService.findAll()
-                                    ?.filter { it.patientId.patientId == singlePatient.patientId }
-                                    ?.firstOrNull { it.simulated == context.isSimulated }
+                                val patientAllocation = patientAllocationService.findByPatientId(
+                                    singlePatient, context.isSimulated
+                                )
                                 if (patientAllocation != null) {
                                     if (patientAllocation.roomNumber == -1) {
                                         patientAllocation.roomNumber = room.roomNumber
@@ -698,10 +777,15 @@ class AllocationController (
             val endTime = System.currentTimeMillis() - startTime - simulationResult.absTime
             
             // Clean up patients with roomNumber == -1 and their trajectories
-            val allocationsToDelete = patientAllocationService.findAll()
-                ?.filter { it.wardName == context.wardName && it.hospitalCode == context.hospitalCode }
-                ?.filter { it.simulated == context.isSimulated }
-                ?.filter { it.roomNumber == -1 }
+            val allocationsToDelete = if (context.isSimulated) {
+                patientAllocationService.findByWardNameAndHospitalCodeSimulated(
+                    context.wardName, context.hospitalCode
+                )
+            } else {
+                patientAllocationService.findByWardNameAndHospitalCode(
+                    context.wardName, context.hospitalCode
+                )
+            }?.filter { it.roomNumber == -1 }
             
             allocationsToDelete?.forEach { allocation ->
                 // Delete trajectories first
@@ -719,7 +803,21 @@ class AllocationController (
                 absTime = simulationResult.absTime,
                 solverTime = allocationTimes
             )
-            ResponseEntity.ok(allocationResponse.toDTO())
+
+            // Summarise how much this twin had to adapt to fit the patients.
+            // Reported per call so "managed" and "independent" runs can be
+            // compared in experiments.
+            val adaptationMetrics = AdaptationMetrics(
+                executionMode = context.executionMode,
+                roomChanges = allocationResponse.changes,
+                adaptiveCapacity = context.adaptiveCapacity,
+                lifecycleManagerTimeMs = setupResult.lmResult.dataRetrievalTime +
+                    setupResult.lmResult.minSatProblemTime +
+                    setupResult.lmResult.extraRoomTime,
+                componentsRetrievalTimeMs = simulationResult.componentsRetrievalTime,
+                solverTimeMs = allocationTimes.solverTime
+            )
+            ResponseEntity.ok(allocationResponse.toDTO().copy(adaptationMetrics = adaptationMetrics))
         } else {
             allocationHelper.handleEmptyAllocations(incomingPatients)
             ResponseEntity.badRequest().build()
